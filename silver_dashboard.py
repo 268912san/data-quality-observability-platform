@@ -116,7 +116,7 @@ def render(gold: Path) -> None:
     totals = results["totals"]
     rows = int(totals["trips"])
     st.caption(
-        f"Silver Delta v{manifest['delta_version']} | {manifest['active_files']} active active files | "
+        f"Silver Delta v{manifest['delta_version']} | {manifest['active_files']} active files | "
         f"{manifest['rows']:,} source rows | Gold computed {manifest['computed_at_utc']}"
     )
     st.info(
