@@ -16,6 +16,8 @@ from insight_views import analyze, render_executive, render_finance, render_oper
 STATUS_COLORS = alt.Scale(
     domain=["PASS", "WARNING", "FAIL"], range=["#16856b", "#e5a42b", "#d75454"]
 )
+# Bump when cached aggregate result fields or their meaning change.
+AGGREGATE_QUERY_REVISION = 2
 
 
 @st.cache_data(max_entries=32, show_spinner="Querying Silver-derived aggregates...")
@@ -24,6 +26,7 @@ def load_results(
     fingerprint: tuple[int, ...],
     date_range: tuple[str, str] | None,
     selections: dict[str, list[str | None]],
+    query_revision: int,
 ) -> dict:
     return query_gold(Path(gold), date_range, selections)
 
@@ -103,7 +106,9 @@ def render(gold: Path) -> None:
                     "are snapshots, not a live dashboard. Public aggregates can contain "
                     "small cohorts; they are not claimed to be anonymized."
                 )
-        results = load_results(str(gold), fingerprint, date_range, selections)
+        results = load_results(
+            str(gold), fingerprint, date_range, selections, AGGREGATE_QUERY_REVISION
+        )
     except (OSError, ValueError, KeyError, duckdb.Error) as error:
         st.error(f"Cannot load Silver dashboard aggregates: {error}")
         st.stop()
@@ -111,7 +116,7 @@ def render(gold: Path) -> None:
     totals = results["totals"]
     rows = int(totals["trips"])
     st.caption(
-        f"Silver Delta v{manifest['delta_version']} | {manifest['active_files']} active files | "
+        f"Silver Delta v{manifest['delta_version']} | {manifest['active_files']} active active files | "
         f"{manifest['rows']:,} source rows | Gold computed {manifest['computed_at_utc']}"
     )
     st.info(
