@@ -388,7 +388,8 @@ def render(gold: Path) -> None:
         )
         st.write("Source archive SHA-256:", manifest["archive_sha256"] or "Not recorded")
         st.write("Status/rule disagreements:", manifest["status_rule_disagreement_rows"])
-        st.write("Rows missing pickup time:", manifest["pickup_min"], "to", manifest["pickup_max"])
+        st.write("Rows missing pickup time:", manifest["missing_pickup_rows"])
+        st.write("Recorded pickup range:", manifest["pickup_min"], "to", manifest["pickup_max"])
         st.dataframe(pd.DataFrame(manifest["columns"]), hide_index=True, width="stretch")
         st.caption(
             "Silver rows have not been deleted, corrected or reclassified. Kafka, a "
