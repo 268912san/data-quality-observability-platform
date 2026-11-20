@@ -236,6 +236,8 @@ def query_gold(
         totals = connection.execute(
             """
             SELECT coalesce(sum(trips), 0) AS trips, sum(amount_sum) AS total_amount,
+                sum(tip_sum) AS total_tips,
+                coalesce(sum(amount_count), 0) AS amount_count,
                 sum(amount_sum) / nullif(sum(amount_count), 0) AS average_amount,
                 sum(distance_sum) / nullif(sum(distance_count), 0) AS average_distance,
                 sum(duration_sum) / nullif(sum(duration_count), 0) AS average_duration,
@@ -251,7 +253,9 @@ def query_gold(
             "SELECT pickup_date, status, sum(trips) AS trips, "
             "sum(amount_sum) AS amount_sum, sum(amount_count) AS amount_count, "
             "sum(distance_sum) AS distance_sum, sum(distance_count) AS distance_count, "
-            "sum(duration_sum) AS duration_sum, sum(duration_count) AS duration_count "
+            "sum(duration_sum) AS duration_sum, sum(duration_count) AS duration_count, "
+            "sum(tip_sum) AS tip_sum, sum(rows_with_rule_fail) AS failed_rows, "
+            "sum(warning_only_rows) AS warning_only_rows "
             "FROM filtered "
             "GROUP BY pickup_date, status ORDER BY pickup_date"
         ).fetchdf()
@@ -270,6 +274,9 @@ def query_gold(
         distributions = {
             column: connection.execute(
                 f"SELECT {column}, sum(trips) AS trips, sum(amount_sum) AS total_amount, "
+                "sum(tip_sum) AS total_tips, sum(amount_count) AS amount_count, "
+                "sum(rows_with_rule_fail) AS failed_rows, "
+                "sum(warning_only_rows) AS warning_only_rows, "
                 "sum(amount_sum) / nullif(sum(amount_count), 0) AS average_amount, "
                 "sum(distance_sum) / nullif(sum(distance_count), 0) AS average_distance, "
                 "100.0 * sum(rows_with_rule_fail) / sum(trips) AS fail_percent FROM filtered "
@@ -278,11 +285,17 @@ def query_gold(
             for column in ("vendor", "payment", "source")
         }
         heatmap = connection.execute(
-            "SELECT isodow(pickup_date) AS weekday, pickup_hour, sum(trips) AS trips, "
-            "sum(amount_sum) AS total_amount, "
-            "100.0 * sum(rows_with_rule_fail) / sum(trips) AS fail_percent "
-            "FROM filtered WHERE pickup_date IS NOT NULL AND pickup_hour IS NOT NULL "
-            "GROUP BY weekday, pickup_hour ORDER BY weekday, pickup_hour"
+            "WITH coverage AS (SELECT isodow(pickup_date) AS weekday, "
+            "count(DISTINCT pickup_date) AS observed_dates FROM filtered "
+            "WHERE pickup_date IS NOT NULL GROUP BY 1) "
+            "SELECT isodow(f.pickup_date) AS weekday, f.pickup_hour, sum(f.trips) AS trips, "
+            "max(c.observed_dates) AS observed_dates, "
+            "sum(f.trips) / max(c.observed_dates) AS trips_per_observed_date, "
+            "sum(f.amount_sum) AS total_amount, "
+            "100.0 * sum(f.rows_with_rule_fail) / sum(f.trips) AS fail_percent "
+            "FROM filtered f JOIN coverage c ON isodow(f.pickup_date) = c.weekday "
+            "WHERE f.pickup_date IS NOT NULL AND f.pickup_hour IS NOT NULL "
+            "GROUP BY isodow(f.pickup_date), f.pickup_hour ORDER BY weekday, pickup_hour"
         ).fetchdf()
         zones = connection.execute(
             f"SELECT direction, location_id, sum(trips) AS trips FROM zones WHERE {where} "

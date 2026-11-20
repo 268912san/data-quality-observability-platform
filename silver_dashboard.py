@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 
 from silver_data import FILTER_COLUMNS, query_gold
+from insight_views import analyze, render_executive, render_finance, render_operations, render_quality
 
 
 STATUS_COLORS = alt.Scale(
@@ -144,9 +145,13 @@ def render(gold: Path) -> None:
     if rows == 0:
         st.warning("No trips match these filters. Adjust the sidebar selections.")
 
-    trends, quality, breakdowns, provenance = st.tabs(
-        ["Trip trends", "Data quality", "Breakdowns & locations", "Provenance"]
+    analysis = analyze(results)
+    executive, trends, quality, breakdowns, finance, provenance = st.tabs(
+        ["Executive & actions", "Trip trends", "Data quality", "Breakdowns & locations",
+         "Finance", "Provenance"]
     )
+    with executive:
+        render_executive(results, analysis)
     with trends:
         st.subheader("Trip volume over time")
         grain = st.selectbox("Trend granularity", ["Day", "Month"], index=1)
@@ -211,12 +216,14 @@ def render(gold: Path) -> None:
 
         st.subheader("Day-of-week and hour heatmap")
         heatmap_metric = st.selectbox(
-            "Heatmap metric", ["Trips", "Recorded amount ($)", "Rule-fail rate (%)"],
+            "Heatmap metric", ["Trips", "Average trips / observed weekday date",
+                               "Recorded amount ($)", "Rule-fail rate (%)"],
             key="heatmap_metric",
         )
         if not results["heatmap"].empty:
             field, scheme = {
                 "Trips": ("trips", "blues"),
+                "Average trips / observed weekday date": ("trips_per_observed_date", "blues"),
                 "Recorded amount ($)": ("total_amount", "redblue"),
                 "Rule-fail rate (%)": ("fail_percent", "oranges"),
             }[heatmap_metric]
@@ -241,7 +248,8 @@ def render(gold: Path) -> None:
             )
             st.caption(
                 "Click a cell to highlight it; Shift-click adds cells; double-click clears. "
-                "Cells show totals across selected dates, not average demand per weekday. "
+                "Trip totals and amounts span selected dates. The average-trip metric divides "
+                "by observed dates for that weekday, including observed dates with no trips at that hour. "
                 "Missing pickup dates/hours are excluded; empty cells are not filled."
             )
         st.subheader("Pickup hour")
@@ -300,8 +308,10 @@ def render(gold: Path) -> None:
             "Download filtered rule counts", rules.to_csv(index=False),
             file_name="taxi-dq-aggregates.csv", mime="text/csv",
         )
+        render_quality(results, analysis)
 
     with breakdowns:
+        render_operations(results, analysis)
         st.subheader("Linked vendor comparison")
         vendors = results["distributions"]["vendor"].copy()
         if not vendors.empty:
@@ -355,6 +365,9 @@ def render(gold: Path) -> None:
             st.altair_chart(bars(locations, "location_id", "TLC location ID"), width="stretch")
             st.dataframe(locations, hide_index=True, width="stretch")
         st.caption("Location IDs are supplied TLC codes. No unverified zone names or coordinates are invented.")
+
+    with finance:
+        render_finance(results, analysis)
 
     with provenance:
         st.write(
