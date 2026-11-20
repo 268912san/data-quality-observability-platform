@@ -1,4 +1,4 @@
-"""Import a supplied Delta snapshot and prepare aggregate-only dashboard data."""
+"""Build Gold aggregates from a local Silver Delta table or DQ-enriched Parquet."""
 
 import argparse
 import hashlib
@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from zipfile import ZipFile
 
 import duckdb
+import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 from deltalake import DeltaTable
 
@@ -95,11 +96,53 @@ def import_archive(archive_path: Path, destination: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_silver(path: Path) -> Path:
+    path = path.resolve(strict=True)
+    if path.is_file():
+        if path.suffix.lower() != ".parquet":
+            raise ValueError("Expected a .parquet file or an extracted Silver folder, not a ZIP path")
+        if any((parent / "_delta_log").is_dir() for parent in path.parents):
+            raise ValueError("Use the whole Delta table directory, not an individual Delta part file")
+        return path
+    if (path / "_delta_log").is_dir():
+        return path
+    children = list(path.iterdir())
+    parquet = [item for item in children if item.is_file() and item.suffix.lower() == ".parquet"]
+    tables = [
+        item for item in children
+        if item.is_dir() and not item.name.startswith((".", "_"))
+        and ((item / "_delta_log").is_dir() or any(item.glob("*.parquet")))
+    ]
+    if parquet and not tables:
+        return path
+    if not parquet and len(tables) == 1:
+        return resolve_silver(tables[0])
+    if tables:
+        raise ValueError("Ambiguous Silver folder: select one table directory or one Parquet dataset")
+    raise ValueError(f"No Delta table or local Parquet files found in {path}")
+
+
 def build_gold(silver: Path, gold: Path, archive_sha256: str | None = None) -> dict:
     if gold.exists():
         raise FileExistsError(f"Gold destination already exists: {gold}")
-    delta = DeltaTable(str(silver.resolve()))
-    dataset = delta.to_pyarrow_dataset()
+    silver = resolve_silver(silver)
+    if silver.is_dir() and gold.resolve().is_relative_to(silver):
+        raise ValueError("Write Gold outside the source Silver directory")
+    delta = DeltaTable(str(silver)) if silver.is_dir() and (silver / "_delta_log").is_dir() else None
+    if delta is not None:
+        dataset = delta.to_pyarrow_dataset()
+    else:
+        files = (
+            [silver] if silver.is_file() else sorted(
+                item for item in silver.iterdir()
+                if item.is_file() and item.suffix.lower() == ".parquet"
+            )
+        )
+        schema = pq.read_schema(files[0])
+        for file in files[1:]:
+            if not schema.equals(pq.read_schema(file), check_metadata=False):
+                raise ValueError(f"Parquet schema mismatch: {file.name}")
+        dataset = ds.dataset([str(file) for file in files], format="parquet", schema=schema)
     missing = REQUIRED - set(dataset.schema.names)
     if missing:
         raise ValueError(f"Missing Silver columns: {', '.join(sorted(missing))}")
@@ -183,8 +226,9 @@ def build_gold(silver: Path, gold: Path, archive_sha256: str | None = None) -> d
             "format_version": 1,
             "computed_at_utc": datetime.now(timezone.utc).isoformat(),
             "silver_table": silver.name,
-            "delta_version": delta.version(),
-            "active_files": len(delta.file_uris()),
+            "source_format": "delta" if delta is not None else "parquet",
+            "delta_version": delta.version() if delta is not None else None,
+            "active_files": len(dataset.files),
             "archive_sha256": archive_sha256,
             "rows": overview[0],
             "pickup_min": overview[1].isoformat() if overview[1] else None,
@@ -309,9 +353,10 @@ def query_gold(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--archive", type=Path)
+    parser.add_argument("--archive", type=Path, help="Optional ZIP import; omit for extracted/local data")
     parser.add_argument(
-        "--silver", type=Path, default=ROOT / "data_lake" / "silver" / "taxi_trips_dq"
+        "--silver", type=Path, default=ROOT / "data_lake" / "silver" / "taxi_trips_dq",
+        help="Delta directory, .parquet file, flat Parquet directory, or parent containing one table",
     )
     parser.add_argument(
         "--gold", type=Path, default=ROOT / "data_lake" / "gold" / "taxi_dashboard"
@@ -319,8 +364,12 @@ def main() -> None:
     args = parser.parse_args()
     fingerprint = import_archive(args.archive, args.silver) if args.archive else None
     manifest = build_gold(args.silver, args.gold, fingerprint)
+    snapshot = (
+        f"Delta v{manifest['delta_version']}"
+        if manifest["source_format"] == "delta" else "Parquet snapshot"
+    )
     print(
-        f"Silver Delta v{manifest['delta_version']}: {manifest['rows']:,} rows, "
+        f"Silver {snapshot}: {manifest['rows']:,} rows, "
         f"{manifest['active_files']} active files. Gold aggregates: {args.gold}"
     )
 

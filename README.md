@@ -20,6 +20,31 @@ python -m pip install -r requirements.txt
 python -m streamlit run streamlit_app.py
 ```
 
+## Build Gold from local Silver (no ZIP needed)
+
+The input must already contain the expected trip fields, derived `trip_duration_minutes`, all DQ01-DQ10 labels and `dq_status`. Raw TLC files without quality results are rejected, not assigned invented PASS labels.
+
+Extract an archive first. A path containing `.zip\NYC_Taxi_Project\...` is an archive view, not a normal local directory.
+
+```powershell
+# An extracted parent Silver folder containing exactly one immediate table:
+python silver_data.py --silver "C:\path\to\NYC_Taxi_Project\data_lake\silver" --gold "C:\path\to\new_gold_snapshot"
+
+# A Delta table directory (preserve its _delta_log):
+python silver_data.py --silver "C:\path\to\silver\taxi_trips_dq" --gold "C:\path\to\another_gold_snapshot"
+
+# A standalone DQ-enriched Parquet file:
+python silver_data.py --silver "C:\path\to\quality_trips.parquet" --gold "C:\path\to\parquet_gold_snapshot"
+```
+
+`--silver` also accepts a flat folder of `.parquet` files with matching schemas. Non-Parquet files such as `_SUCCESS` are ignored. Plain partitioned layouts are not inferred recursively. Parent folders with multiple tables or mixed datasets are rejected: point to one dataset explicitly.
+
+When `_delta_log` exists, the Delta reader selects active files and excludes removed parts. Do not select an individual Delta part or delete the log to force plain-Parquet mode. Corrupt logs are reported rather than silently bypassed. For plain Parquet, the manifest records `source_format: parquet` and a null Delta version.
+
+Silver files are read-only. Write Gold outside the source directory to a new destination; existing output folders are never overwritten. The script generates `trips.parquet`, `zones.parquet` and `manifest.json` together. The optional `--archive` ZIP-import route is still available, but not used when omitted.
+
+Building a new snapshot does not automatically change the hosted dashboard. Validate the output, then publish only the approved three Gold files into this repository's `gold` folder. The hosted app reads that folder, not your laptop's Silver data. No Silver upload is required.
+
 ## Streamlit Community Cloud
 
 Deploy repository `268912san/nyc-taxi-dashboard`, branch `main`, entry point `streamlit_app.py`, using Python 3.12 or newer. No application secrets are needed. Public access permits viewing without a visitor login.

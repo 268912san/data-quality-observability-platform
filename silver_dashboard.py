@@ -53,7 +53,7 @@ def bars(frame: pd.DataFrame, label: str, title: str) -> alt.Chart:
 
 def render(gold: Path) -> None:
     st.title("NYC Yellow Taxi - Silver Analytics")
-    st.caption("Interactive trip and quality metrics computed from the supplied Silver Delta snapshot.")
+    st.caption("Interactive trip and quality metrics computed from the supplied Silver snapshot.")
     try:
         paths = [gold / name for name in ("manifest.json", "trips.parquet", "zones.parquet")]
         fingerprint = tuple(path.stat().st_mtime_ns for path in paths)
@@ -115,8 +115,12 @@ def render(gold: Path) -> None:
 
     totals = results["totals"]
     rows = int(totals["trips"])
+    snapshot = (
+        f"Delta v{manifest['delta_version']}"
+        if manifest.get("source_format", "delta") == "delta" else "Parquet snapshot"
+    )
     st.caption(
-        f"Silver Delta v{manifest['delta_version']} | {manifest['active_files']} active files | "
+        f"Silver {snapshot} | {manifest['active_files']} active files | "
         f"{manifest['rows']:,} source rows | Gold computed {manifest['computed_at_utc']}"
     )
     st.info(
@@ -379,13 +383,12 @@ def render(gold: Path) -> None:
 
     with provenance:
         st.write(
-            "Data path: supplied ZIP -> unchanged Silver Delta snapshot -> computed Gold "
+            "Data path: ZIP import or local Silver snapshot -> computed Gold "
             "aggregates -> interactive dashboard. The web app reads only Gold aggregates."
         )
         st.write("Source archive SHA-256:", manifest["archive_sha256"] or "Not recorded")
         st.write("Status/rule disagreements:", manifest["status_rule_disagreement_rows"])
-        st.write("Rows missing pickup time:", manifest["missing_pickup_rows"])
-        st.write("Recorded pickup range:", manifest["pickup_min"], "to", manifest["pickup_max"])
+        st.write("Rows missing pickup time:", manifest["pickup_min"], "to", manifest["pickup_max"])
         st.dataframe(pd.DataFrame(manifest["columns"]), hide_index=True, width="stretch")
         st.caption(
             "Silver rows have not been deleted, corrected or reclassified. Kafka, a "
