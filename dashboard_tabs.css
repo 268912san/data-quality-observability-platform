@@ -1,0 +1,57 @@
+main [role="tablist"] {
+    display: flex;
+    gap: 0.5rem;
+    height: auto;
+    padding: 0.5rem;
+    margin-bottom: 0.75rem;
+    overflow-x: auto;
+    border: 1px solid #94a3b8;
+    border-radius: 0.875rem;
+    background: var(--secondary-background-color, Canvas);
+}
+
+main [role="tablist"] [role="tab"] {
+    flex-shrink: 0;
+    height: auto;
+    min-height: 3rem;
+    padding: 0.75rem 1.125rem;
+    border: 1px solid #94a3b8;
+    border-radius: 0.625rem;
+    background: var(--background-color, Canvas);
+    color: var(--text-color, CanvasText);
+    font-size: 0.95rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+main [role="tablist"] [role="tab"] p {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+}
+
+main [role="tablist"] [role="tab"]:hover {
+    border-color: #16856b;
+    box-shadow: inset 0 0 0 1px #16856b;
+}
+
+main [role="tablist"] [role="tab"][aria-selected="true"] {
+    border-color: #126653;
+    background: #126653;
+    color: #ffffff;
+    font-weight: 700;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+main [role="tablist"] [role="tab"]:focus-visible {
+    outline: 3px solid #b45309;
+    outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+    main [role="tablist"] [role="tab"] {
+        padding: 0.625rem 0.875rem;
+        font-size: 0.875rem;
+    }
+}

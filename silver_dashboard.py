@@ -151,6 +151,9 @@ def render(gold: Path) -> None:
         st.warning("No trips match these filters. Adjust the sidebar selections.")
 
     analysis = analyze(results)
+    st.html(Path(__file__).with_name("dashboard_tabs.css"))
+    st.subheader("Explore the dashboard")
+    st.caption("Click a section tab below to switch views. The filled green tab is the current section.")
     executive, trends, quality, breakdowns, finance, provenance = st.tabs(
         ["Executive & actions", "Trip trends", "Data quality", "Breakdowns & locations",
          "Finance", "Provenance"]
