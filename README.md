@@ -8,23 +8,48 @@ This project uses **3,336,716 NYC Yellow Taxi records** to show how recorded tri
 
 ## How the NYC Taxi data was used
 
-| Step | What happens to the data |
-| --- | --- |
-| **1. Load historical trips** | PySpark reads the August 2026 Yellow Taxi Parquet file. The notebook also uses a 100-row sample to test Kafka separately from the full replay. |
-| **2. Replay through Kafka** | Spark serializes each full trip row as a JSON message, retaining null fields, and publishes it to `taxi-trips-full`. This is a replay of historical trips, not a live taxi feed. |
-| **3. Parse and validate** | Structured Streaming reads the topic and parses the message body with an explicit 21-field schema. The quality query uses `foreachBatch` and `availableNow=True` to process the available backlog and stop. The baseline caps each trigger at 2,000 offsets; the comparison replays from the beginning with a fresh checkpoint and a 5,000-offset cap. |
-| **4. Derive fields and route rows** | Each microbatch calculates `trip_duration_minutes` from the pickup and drop-off timestamps, evaluates DQ01-DQ10, and adds `duplicate_count`, `dq_status`, and `kafka_batch_id`. `FAIL` takes precedence over `WARNING`. The notebook appends `PASS` and `WARNING` rows to Silver Delta and `FAIL` rows to Quarantine Delta. |
-| **5. Build dashboard aggregates** | [`silver_data.py`](silver_data.py) reads a separately supplied, quality-enriched Delta or Parquet snapshot containing all three statuses. PyArrow and DuckDB produce [`gold/trips.parquet`](gold/trips.parquet) for trip and rule metrics, [`gold/zones.parquet`](gold/zones.parquet) for pickup and drop-off counts, and [`gold/manifest.json`](gold/manifest.json) for schema and provenance. |
-| **6. Explore in Streamlit** | The hosted app reads those three Gold files. It recounts existing rule labels and lets readers compare dates, vendors, payment codes, request sources, statuses, and zones. It does not read Kafka, rerun the Spark rules, or export individual trips. |
+The project has two separate paths:
 
-### Notebook outputs versus dashboard input
+```text
+Notebook: August 2026 Parquet -> Kafka JSON replay -> Spark microbatches -> Silver / Quarantine Delta
+Dashboard: separately supplied quality-enriched snapshot -> Gold aggregates -> Streamlit
+```
+
+### Apache Kafka: replaying historical trips
+
+- **Producer and payload.** Spark first reads the August 2026 Yellow Taxi Parquet file. The notebook uses a 100-row smoke test on `taxi-trips` and a separate full replay on `taxi-trips-full`. For the full replay, each source row becomes a JSON message value. Null fields are serialized explicitly so missing passenger counts and request sources remain visible to validation. Kafka is transporting historical trips, not collecting live taxi events.
+- **Partitioning and offsets.** The notebook documents `taxi-trips-full` with three Kafka partitions and replication factor one on a local broker. Replication factor one means this setup does not demonstrate broker failover. The producer's `repartition(4)` changes Spark's write-side parallelism; it does not create four Kafka partitions. Kafka offsets identify positions within a partition, not unique taxi-trip IDs or a global ordering across the topic.
+- **Replay and reconciliation.** For a fresh query, `startingOffsets=earliest` starts from the earliest available offsets. A resumed query uses its checkpoint instead. The notebook compares the sum of per-partition offset ranges with the output row counts and checks final lag. This checks whether record counts reconcile for the run; it does not prove that every individual trip was written exactly once.
+
+### PySpark Structured Streaming: parsing and validating microbatches
+
+- **Schema and execution.** Spark decodes the Kafka message value and parses it against an explicit 21-field schema. Pickup and drop-off are parsed as timestamps without a timezone; zone and code fields use integral types, and distance and monetary amounts use doubles. The validation callback sees the parsed taxi fields rather than the Kafka message envelope. `availableNow=True` processes the available backlog in microbatches and then stops. It is not a continuously running production stream.
+- **Batch sizing.** The baseline caps consumption at 2,000 Kafka offsets per trigger. The comparison starts from the earliest available offsets with a fresh checkpoint, a 5,000-offset cap, and separate output paths. A cap limits offset intake per trigger; it is not a guaranteed batch size or a throughput target. The two settings demonstrate different batch counts, not a proven speedup.
+- **Validation and traceability.** `foreachBatch` calls the quality logic for each microbatch. It derives `trip_duration_minutes`, evaluates DQ01-DQ10 independently, and carries the rule labels alongside `duplicate_count`, `dq_status`, and `kafka_batch_id`. A `FAIL` anywhere takes precedence over `WARNING`; rows with neither are `PASS`. The batch ID identifies the Spark microbatch, not a Kafka partition/offset pair.
+- **Duplicate scope.** DQ07 compares all original parsed fields **within the current microbatch** and flags every row in an exact duplicate group. It does not detect duplicates across microbatches. Changing batch boundaries can change which records this rule compares; the notebook and dashboard failure totals should not be attributed to DQ07 without a row-level comparison.
+
+### Delta Lake: storing, routing, and compacting results
+
+| Output | What is written |
+| --- | --- |
+| **Silver Delta** | `PASS` and `WARNING` rows, with the parsed trip fields, derived duration, rule results, overall status, and batch ID. Warnings remain available for review. |
+| **Quarantine Delta** | Rows with any hard failure, retaining the rule results that explain why each row was routed there. |
+| **Streaming checkpoint** | Per-query progress used by Spark to resume consumption. The replay experiment uses its own checkpoint so it can start independently. |
+
+Silver and Quarantine are written as **two separate append operations**. Delta's transaction log identifies the active Parquet files for each table, so a Delta reader uses the table snapshot rather than treating every file on disk as current. The notebook does not demonstrate a single transaction spanning both tables or an application-level idempotency guard for retried `foreachBatch` writes. Checkpointing alone does not establish exactly-once delivery for these writes.
+
+Repeated microbatch appends can create many small files. The notebook reads the routed Delta outputs and rewrites them to separate experimental locations with Spark `coalesce(4)` for Silver and `coalesce(2)` for Quarantine. It compares file counts, storage, and row totals before and after the rewrite. This is not native Delta `OPTIMIZE`; the measured results and their limits are listed below.
+
+### From the evaluation snapshot to Streamlit
+
+[`silver_data.py`](silver_data.py) reads a separately supplied, quality-enriched Delta or Parquet snapshot containing all three statuses. PyArrow and DuckDB produce [`gold/trips.parquet`](gold/trips.parquet) for trip and rule metrics, [`gold/zones.parquet`](gold/zones.parquet) for pickup and drop-off counts, and [`gold/manifest.json`](gold/manifest.json) for schema and provenance. Streamlit reads those files, not Kafka or the notebook's routed Delta outputs. It recounts existing rule labels and lets readers compare dates, vendors, payment codes, request sources, statuses, and zones. It does not rerun the Spark rules or export individual trips.
 
 | Evidence | Row counts |
 | --- | --- |
 | **Notebook's routed Delta outputs** | Both saved validation runs show **3,328,863 Silver** (`PASS` or `WARNING`) + **7,853 Quarantine** (`FAIL`) = **3,336,716**. |
 | **Published dashboard evaluation snapshot** | **3,313,587 PASS**, **15,262 WARNING-only**, and **7,867 with at least one FAIL** = **3,336,716**. |
 
-These counts come from different artifacts. The dashboard's evaluation snapshot retains failed rows, unlike the notebook's routed Silver table. Equal total row counts do not establish that the artifacts have identical labels. DQ07 compares all original parsed fields **within one microbatch** and does not check for duplicates across microbatches. The 14-row difference between the two failure totals is not attributed to a specific rule without a row-level comparison.
+These counts come from different artifacts. The dashboard's evaluation snapshot retains failed rows, unlike the notebook's routed Silver table. Equal total row counts do not establish that the artifacts have identical labels. The 14-row difference between the two failure totals is not attributed to a specific rule without a row-level comparison.
 
 ## Dataset and field dictionary
 
