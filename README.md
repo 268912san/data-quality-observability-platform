@@ -1,4 +1,6 @@
-# NYC Taxi dashboard
+# Scalable Data Quality and Observability Platform for Large-Scale Data Pipelines
+
+*NYC Yellow Taxi case study*
 
 Interactive trip and data-quality analytics built with Streamlit, using reviewed Gold aggregates only.
 
