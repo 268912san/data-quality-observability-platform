@@ -49,7 +49,7 @@ Building a new snapshot does not automatically change the hosted dashboard. Vali
 
 ## Streamlit Community Cloud
 
-Deploy repository `268912san/nyc-taxi-dashboard`, branch `main`, entry point `streamlit_app.py`, using Python 3.12 or newer. No application secrets are needed. Public access permits viewing without a visitor login.
+Deploy repository `268912san/data-quality-observability-platform`, branch `main`, entry point `streamlit_app.py`, using Python 3.12 or newer. No application secrets are needed. Public access permits viewing without a visitor login.
 
 ## Data and interpretation
 
